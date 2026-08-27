@@ -201,8 +201,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Hi <b>{name}</b> 👋\nWelcome to the <b>Video Downloader & Music Finder</b> bot 🎶\n\n🎬 Send a link from <b>YouTube / Instagram / TikTok / SoundCloud</b> or even <b>Spotify</b>.\n🎧 After that you can identify its song or get the full MP3!\n\n👇 Pick an option below or just send your link:",
     },
     "hint": {
-        "fa": "🤖 <b>راهنما:</b>\n\n1️⃣ لینک از یوتیوب، اینستاگرام، تیک‌تاک، ساند‌کلود یا اسپاتیفای کپی کن.\n2️⃣ همین‌جا بفرستش.\n3️⃣ کیفیت رو انتخاب کن و صبر کن 📥\n4️⃣ زیر فایل این دکمه‌ها هست:\n     • 🎵 شناسایی آهنگ (Shazam)\n     • 🎧 دانلود نسخه موزیک\n     • 📝 متن ترانه • ⏱ پیش‌نمایش • 🔔 رینگتون\n\n📨 پست کانال‌ها رو هم می‌تونی فوروارد بدی تا برات ذخیره‌اش کنم!\n⚠️ سقف حجم هر فایل: حدود {max} مگابایت",
-        "en": "🤖 <b>Guide:</b>\n\n1️⃣ Copy a link from YouTube, Instagram, TikTok, SoundCloud or Spotify.\n2️⃣ Send it here.\n3️⃣ Choose quality and wait 📥\n4️⃣ Under every file you'll see:\n     • 🎵 Identify song (Shazam)\n     • 🎧 Download music version\n     • 📝 Lyrics • ⏱ Preview • 🔔 Ringtone\n\n📨 You can also forward channel posts and I'll save them for you!\n⚠️ Max file size: ~{max} MB",
+        "fa": "🤖 <b>راهنما:</b>\n\n1️⃣ لینک از یوتیوب، اینستاگرام، تیک‌تاک، ساند‌کلود یا اسپاتیفای کپی کن.\n2️⃣ همین‌جا بفرستش.\n3️⃣ کیفیت رو انتخاب کن و صبر کن 📥\n4️⃣ زیر فایل این دکمه‌ها هست:\n     • 🎵 شناسایی آهنگ (Shazam)\n     • 🎧 دانلود نسخه موزیک\n     • 📝 متن ترانه • ⏱ پیش‌نمایش • 🔔 رینگتون\n\n🔤 چند خط از <b>متن آهنگ</b> رو بفرست (بدون اسم خواننده) تا خودم آهنگ رو پیدا کنم!\n📨 پست کانال‌ها رو هم می‌تونی فوروارد بدی تا برات ذخیره‌اش کنم!\n⚠️ سقف حجم هر فایل: حدود {max} مگابایت",
+        "en": "🤖 <b>Guide:</b>\n\n1️⃣ Copy a link from YouTube, Instagram, TikTok, SoundCloud or Spotify.\n2️⃣ Send it here.\n3️⃣ Choose quality and wait 📥\n4️⃣ Under every file you'll see:\n     • 🎵 Identify song (Shazam)\n     • 🎧 Download music version\n     • 📝 Lyrics • ⏱ Preview • 🔔 Ringtone\n\n🔤 Send a few lines of <b>song lyrics</b> (no artist needed) and I'll find the track!\n📨 You can also forward channel posts and I'll save them for you!\n⚠️ Max file size: ~{max} MB",
     },
     "join": {
         "fa": "⛔️ برای استفاده از ربات ابتدا باید در کانال‌های زیر عضو بشی:\n\nبعد از عضویت روی «✅ بررسی عضویت» بزن.",
@@ -304,7 +304,7 @@ BTN: Dict[str, Dict[str, str]] = {
     "search_btn_sc": {"fa": "☁️ SoundCloud", "en": "☁️ SoundCloud"},
     "search_btn_yt": {"fa": "▶️ YouTube", "en": "▶️ YouTube"},
     "search_none": {"fa": "🔍 چیزی پیدا نشد.", "en": "🔍 No results."},
-    "search_empty": {"fa": "🔍 یک نام خواننده یا آهنگ بفرست.", "en": "🔍 Send an artist or song name."},
+    "search_empty": {"fa": "🔍 یک نام خواننده یا آهنگ بفرست — یا چند خط از متن ترانه.", "en": "🔍 Send an artist/song name — or a few lines of lyrics."},
     "listen": {"fa": "🔗 گوش دادن آنلاین", "en": "🔗 Listen online"},
     "lyrics": {"fa": "📝 متن ترانه", "en": "📝 Lyrics"},
     "preview": {"fa": "⏱ پیش‌نمایش", "en": "⏱ Preview"},
@@ -1460,9 +1460,22 @@ LYRICS_TAG_NOISE = re.compile(
 )
 
 
+# یکدست‌سازی فارسی/عربی: ي→ی ك→ک ى→ی و حذف نیم‌فاصله (ZWNJ) —
+# چون سایت‌های متن آهنگ «می‌رم» را ایندکس کرده‌اند و کاربر «میرم» تایپ می‌کند.
+FA_NORMALIZE_MAP = str.maketrans({
+    "\u064a": "\u06cc",  # ي عربی → ی
+    "\u0643": "\u06a9",  # ك عربی → ک
+    "\u0649": "\u06cc",  # ى → ی
+    "\u200c": "",        # نیم‌فاصله حذف
+    "\u200d": "",        # ZWJ حذف
+    "\u200e": "", "\u200f": "",  # علامت‌های جهت
+})
+
+
 def _clean_lyric_snippet(text: str, limit: int = 220) -> str:
-    """حذف برچسب‌های [Verse]/[0:12] و فشرده‌سازی فاصله‌ها برای ارسال به موتورهای جستجو."""
+    """حذف برچسب‌های [Verse]/[0:12]، یکدست‌سازی حروف عربی/ZWNJ و فشرده‌سازی فاصله‌ها."""
     t = LYRICS_TAG_NOISE.sub(" ", text or "")
+    t = t.translate(FA_NORMALIZE_MAP)
     t = re.sub(r"\s+", " ", t).strip()
     return t[:limit].strip()
 
@@ -1541,6 +1554,7 @@ async def _ddg_by_lyrics(cli: httpx.AsyncClient, snippet: str) -> Optional[Dict[
     queries: List[str] = []
     if NON_LATIN_RE.search(snippet):
         queries.append(f"متن آهنگ {snippet[:100]}")
+        queries.append(f"دانلود آهنگ {snippet[:60]}")
         queries.append(f'"{snippet[:150]}" lyrics')
     else:
         queries.append(f'"{snippet[:150]}" lyrics')
@@ -1554,7 +1568,7 @@ async def _ddg_by_lyrics(cli: httpx.AsyncClient, snippet: str) -> Optional[Dict[
         if r.status_code != 200:
             continue
         titles = _ddg_titles(r.text)
-        if q.startswith("متن آهنگ"):
+        if q.startswith(("متن آهنگ", "دانلود آهنگ")):
             for t in titles:
                 core = FA_LYRICS_PREFIX.sub("", t).split("|")[0].strip(" -–—")
                 if len(core) >= 4:
@@ -2030,6 +2044,10 @@ async def on_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 ud.pop("pending", None)
                 await run_music_search(context, msg.chat_id, user, text, platform)
                 return
+            # اگر متن شبیه ترانه باشد → بدون پرسیدن پلتفرم، مستقیم آهنگ را از متن پیدا کن
+            if looks_like_lyrics(text):
+                await run_music_search(context, msg.chat_id, user, text, "youtube")
+                return
             # در غیر این صورت: پیشنهاد جستجو
             ud["pending"] = {"act": "search", "query": text}
             shown = text if len(text) <= 300 else text[:300] + "…"
@@ -2102,8 +2120,11 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     در یوتیوب هم جستجو می‌شود (یوتیوب متن ترانه را خیلی بهتر پیدا می‌کند).
     """
     shown = query if len(query) <= 120 else query[:120] + "…"
-    notice = await context.bot.send_message(chat_id, f"🔍 «{esc(shown)}»…",
-                                            parse_mode=ParseMode.HTML)
+    if looks_like_lyrics(query):
+        notice_txt = "🔤 <b>در حال تشخیص آهنگ از متن ترانه…</b> ⏳"
+    else:
+        notice_txt = f"🔍 «{esc(shown)}»…"
+    notice = await context.bot.send_message(chat_id, notice_txt, parse_mode=ParseMode.HTML)
 
     # ۱) جستجوی مستقیم در پلتفرم انتخابی
     try:
@@ -2136,9 +2157,10 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
             except Exception as exc:
                 log_exc(exc, "search_sync(lyrics)")
 
-    # ۳) متن شبیه ترانه بود ولی هیچ نتیجه‌ای نگرفتیم → یوتیوب با خودِ متن
-    #    (یوتیوب متن ترانه را خیلی بهتر از SoundCloud می‌فهمد)
-    if not (lyrics_results or direct_results) and looks_like_lyrics(query):
+    # ۳) هیچ نتیجه‌ای نگرفتیم → یوتیوب با خودِ متن را امتحان کن.
+    #    (یوتیوب هم متن ترانه و هم املای محاوره‌ای فارسی را خیلی بهتر
+    #    از SoundCloud/lrclib می‌فهمد؛ این لایه برای آهنگ‌های ایرانی حیاتی است)
+    if not (lyrics_results or direct_results):
         tries: List[str] = []
         if platform != "youtube":
             tries.append(query)

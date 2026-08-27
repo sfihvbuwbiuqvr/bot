@@ -1,0 +1,10 @@
+# حساس — هرگز commit نشود
+*cookie*.txt
+.env
+*.novi.txt
+
+# داده‌های زمان اجرا
+bot.db*
+downloads/
+__pycache__/
+*.pyc
