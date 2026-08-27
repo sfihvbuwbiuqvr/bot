@@ -674,7 +674,7 @@ def reg_token_add(**kwargs) -> str:
 REGISTRY: Dict[str, Dict[str, Any]] = {}
 REG_ORDER: List[str] = []
 REG_TTL: int = 45 * 60     # اعتبار دکمه‌ها: ۴۵ دقیقه
-REG_MAX: int = 400
+REG_MAX: int = 1500
 
 JOIN_OK: Dict[int, float] = {}          # user_id -> تا چه زمانی عضویت معتبر فرض شود
 CHAT_LINKS: Dict[str, Tuple[float, str]] = {}
@@ -2074,7 +2074,8 @@ async def on_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 def search_sync(query: str, platform: str, limit: int = 8) -> List[Dict[str, Any]]:
     """جستجوی فقط متادیتا (بدون دانلود). platform: 'soundcloud' | 'youtube'."""
-    search_prefix = "scsearch10" if platform == "soundcloud" else "ytsearch10"
+    n = max(10, min(30, limit))
+    search_prefix = ("scsearch" if platform == "soundcloud" else "ytsearch") + str(n)
     opts = _ydl_base_opts()
     opts.pop("playlist_items", None)
     opts.update({
@@ -2110,6 +2111,96 @@ def search_sync(query: str, platform: str, limit: int = 8) -> List[Dict[str, Any
     return out
 
 
+SEARCH_PAGE_SIZE = 7      # نتیجه در هر صفحه
+SEARCH_TOTAL = 24         # حداکثر نتایج هر جستجو
+
+
+def _norm_txt(s: str) -> str:
+    """نرمال‌سازی متن برای مقایسه: کوچک، یکدست فارسی/عربی، بدون علامت سجاوند."""
+    s = (s or "").lower().translate(FA_NORMALIZE_MAP)
+    s = re.sub(r"[^\w\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+NOISE_TITLE_RE = re.compile(
+    r"(?:^|\s)(?:cover|кавер|remix|ریمیکس|sped\s*up|slowed|reverb|nightcore|karaoke|"
+    r"بیکلام|instrumental|preview|snippet|ringtone|reaction|تست\s?صدا|mixtape|"
+    r"playlist|پلی\s?لیست|full\s+album|آلبوم\s?کامل|live\s?version)(?:\s|$)", re.I)
+GOOD_TITLE_RE = re.compile(
+    r"(?:^|\s)(?:official|رسمی|lyrics?|mv|audio|موزیک\s?ویدیو)(?:\s|$)", re.I)
+
+
+def _score_result(r: Dict[str, Any], terms: List[str],
+                  hit: Optional[Dict[str, str]]) -> float:
+    """امتیاز relevance برای مرتب‌سازی: هرچه به «آهنگ اصلی» نزدیک‌تر، بالاتر."""
+    title = _norm_txt(r.get("title") or "")
+    uploader = _norm_txt(r.get("uploader") or "")
+    s = 0.0
+    for t in terms:
+        if t and t in title:
+            s += 2
+        if t and t in uploader:
+            s += 2.5
+    if hit:
+        ht = _norm_txt(hit.get("title") or "")
+        ha = _norm_txt(hit.get("artist") or "")
+        if ht and ht in title:
+            s += 4
+        if ha and (ha in title or ha in uploader):
+            s += 3
+    try:
+        dur = float(r.get("duration") or 0)
+    except Exception:  # noqa: BLE001
+        dur = 0.0
+    if dur:
+        if 80 <= dur <= 480:      # طول منطقی یک آهنگ
+            s += 1.5
+        elif dur < 40 or dur > 1500:  # تیزر/پیش‌نمایش یا ست/میکس طولانی
+            s -= 5
+    if NOISE_TITLE_RE.search(title):   # کاور/ریمیکس/بیکلام/اسلوند…
+        s -= 3
+    if GOOD_TITLE_RE.search(title):    # official / lyrics / موزیک‌ویدیو
+        s += 1
+    return s
+
+
+def _search_page_count(ent: Dict[str, Any]) -> int:
+    items = ent.get("items") or []
+    return max(1, (len(items) + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE)
+
+
+def _search_page_text(ent: Dict[str, Any], page: int) -> str:
+    items = ent.get("items") or []
+    pages = _search_page_count(ent)
+    page = max(0, min(page, pages - 1))
+    txt = ent.get("header") or ""
+    if pages > 1:
+        txt += f"\n📄 صفحه‌ی <b>{page + 1}</b> از {pages} • مجموع {len(items)} نتیجه"
+    return txt
+
+
+def _search_page_kb(ent: Dict[str, Any], stok: str, page: int, uid: int) -> InlineKeyboardMarkup:
+    items = ent.get("items") or []
+    pages = _search_page_count(ent)
+    page = max(0, min(page, pages - 1))
+    rows: List[List[InlineKeyboardButton]] = []
+    for lbl, cb in items[page * SEARCH_PAGE_SIZE:(page + 1) * SEARCH_PAGE_SIZE]:
+        rows.append([InlineKeyboardButton(lbl, callback_data=cb)])
+    nav: List[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ قبلی", callback_data=f"pg:{stok}:{page - 1}"))
+    nav.append(InlineKeyboardButton(f"📄 {page + 1} / {pages}", callback_data="noop"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("بعدی ▶️", callback_data=f"pg:{stok}:{page + 1}"))
+    rows.append(nav)
+    plat = ent.get("platform") or "youtube"
+    if plat == "soundcloud":
+        rows.append([InlineKeyboardButton("▶️ همین را در YouTube هم بگرد", callback_data=f"alt:{stok}")])
+    else:
+        rows.append([InlineKeyboardButton("☁️ همین را در SoundCloud هم بگرد", callback_data=f"alt:{stok}")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
                            user, query: str, platform: str) -> None:
     """جستجو و نمایش لیست نتایج به‌صورت دکمه‌های اینلاین.
@@ -2128,7 +2219,7 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 
     # ۱) جستجوی مستقیم در پلتفرم انتخابی
     try:
-        direct_results = await asyncio.to_thread(search_sync, query, platform, 8)
+        direct_results = await asyncio.to_thread(search_sync, query, platform, SEARCH_TOTAL)
         for r in direct_results:
             r["engine"] = platform
     except Exception as exc:
@@ -2180,22 +2271,31 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 
     await safe_delete(notice)
 
-    # ترکیب نتایج با حذف تکراری (بر اساس URL)
-    combined: List[Dict[str, Any]] = []
+    # ترکیب: نتایجِ تشخیص‌شده از متن پین می‌مانند؛ بقیه با امتیاز relevance مرتب
+    # و نتایج تکراری (URL یا عنوان+کانال مشابه) حذف می‌شوند.
+    pinned: List[Dict[str, Any]] = []
+    rest: List[Dict[str, Any]] = []
     seen_urls: set = set()
-    for r in (lyrics_results + direct_results):
+    seen_keys: set = set()
+    for r, is_pin in ([(x, True) for x in lyrics_results] + [(x, False) for x in direct_results]):
         u = r.get("url") or ""
-        if u and u not in seen_urls:
+        if u and u in seen_urls:
+            continue
+        key = (_norm_txt(r.get("title"))[:45], _norm_txt(r.get("uploader"))[:25])
+        if u and key in seen_keys:
+            continue
+        if u:
             seen_urls.add(u)
-            combined.append(r)
-        elif not u:
-            combined.append(r)
+            seen_keys.add(key)
+        (pinned if is_pin else rest).append(r)
+    terms = [w for w in _norm_txt(query).split() if len(w) >= 3][:8]
+    rest.sort(key=lambda r: -_score_result(r, terms, lyrics_hit))
+    combined = (pinned + rest)[:SEARCH_TOTAL]
 
     if not combined:
         await context.bot.send_message(chat_id, L(user.id, "search_none"))
         return
 
-    rows: List[List[InlineKeyboardButton]] = []
     header_lines = [f"🔍 <b>{esc(shown)}</b>\n"]
     if lyrics_hit:
         hit_label = esc(lyrics_hit["title"])
@@ -2214,6 +2314,7 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         header_lines.append("🎵 نتایج:\n")
     header = "\n".join(header_lines)
 
+    items: List[Tuple[str, str]] = []
     for i, r in enumerate(combined, 1):
         title = clean_title(r["title"])
         if r.get("uploader") and r["uploader"].lower() not in title.lower():
@@ -2225,10 +2326,14 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         prefix = "scs" if eng == "soundcloud" else "yt"
         tok = reg_token_add(kind=prefix, owner=user.id, url=r["url"],
                             title=r["title"], platform=eng)
-        rows.append([InlineKeyboardButton(label, callback_data=f"{prefix}:{tok}")])
+        items.append((label, f"{prefix}:{tok}"))
+    stok = reg_token_add(kind="srch", owner=user.id, items=items, header=header,
+                         query=query, platform=platform)
+    sent = REGISTRY[stok]
     try:
-        await context.bot.send_message(chat_id, header, parse_mode=ParseMode.HTML,
-                                       reply_markup=InlineKeyboardMarkup(rows))
+        await context.bot.send_message(chat_id, _search_page_text(sent, 0),
+                                       parse_mode=ParseMode.HTML,
+                                       reply_markup=_search_page_kb(sent, stok, 0, user.id))
     except TelegramError as exc:
         log_exc(exc, "search-results")
         await context.bot.send_message(chat_id, L(user.id, "err_generic"))
@@ -2668,13 +2773,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     parts = data.split(":")
     head = parts[0] if parts else ""
 
+    # دکمه‌ی بی‌عمل (نشانگر صفحه)
+    if data == "noop":
+        try:
+            await q.answer()
+        except TelegramError:
+            pass
+        return
+
     simple_heads = ("s:", "sc:", "v:", "q:", "ly:", "pv:", "rg:", "cf:", "f:", "pl:", "rh:",
-                   "scs:", "yt:")
+                    "scs:", "yt:", "pg:", "alt:")
     matched = next((h for h in simple_heads if data.startswith(h)), None)
     if matched:
         tok = data[len(matched):]
-        # f: و pl: شناسه‌ی اضافه دارند → فقط بخش توکن
-        if matched in ("f:", "pl:"):
+        # f: و pl: و pg: شناسه‌ی اضافه دارند → فقط بخش توکن
+        if matched in ("f:", "pl:", "pg:"):
             seg = tok.split(":")
             tok = seg[0]
         ent = REGISTRY.get(tok)
@@ -2745,6 +2858,52 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             title = ent.get("title") or ""
             await send_music_by_query(context, chat_id, url, user.id,
                                        source_title=title, platform=platform)
+            return
+
+        # --- صفحه‌بندی نتایج جستجو ---
+        if matched == "pg:":
+            if ent.get("kind") != "srch":
+                return
+            seg = data.split(":")
+            try:
+                page = int(seg[2]) if len(seg) > 2 else 0
+            except ValueError:
+                page = 0
+            txt = _search_page_text(ent, page)
+            kb = _search_page_kb(ent, tok, page, user.id)
+            mid = getattr(q.message, "message_id", None)
+            try:
+                if mid:
+                    await context.bot.edit_message_text(txt, chat_id=chat_id, message_id=mid,
+                                                        parse_mode=ParseMode.HTML, reply_markup=kb)
+                else:
+                    await context.bot.send_message(chat_id, txt, parse_mode=ParseMode.HTML,
+                                                   reply_markup=kb)
+            except BadRequest:
+                pass  # «message is not modified» و مشابهات
+            try:
+                await q.answer()
+            except TelegramError:
+                pass
+            return
+
+        # --- جستجوی همان متن در پلتفرم مقابل ---
+        if matched == "alt:":
+            if ent.get("kind") != "srch":
+                return
+            try:
+                await q.answer()
+            except TelegramError:
+                pass
+            other = "youtube" if (ent.get("platform") or "youtube") == "soundcloud" else "soundcloud"
+            try:
+                await run_music_search(context, chat_id, user, ent.get("query") or "", other)
+            except Exception as exc:
+                log_exc(exc, "alt-search")
+                try:
+                    await context.bot.send_message(chat_id, L(user.id, "err_generic"))
+                except TelegramError:
+                    pass
             return
 
         # --- متن ترانه ---
