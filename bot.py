@@ -550,6 +550,57 @@ def auto_shazam_on() -> bool:
     return setting_on("auto_shazam")
 
 
+# --- سوییچ سرویس‌ها (پنل ادمین): کلیدهای *_off یعنی «غیرفعال شده» ---
+
+def yt_enabled() -> bool:
+    return not setting_on("yt_off")
+
+
+def sc_enabled() -> bool:
+    return not setting_on("sc_off")
+
+
+def lyrics_detect_on() -> bool:
+    return not setting_on("lyrics_off")
+
+
+def inline_enabled() -> bool:
+    return not setting_on("inline_off")
+
+
+PLATFORM_OFF_TXT: Dict[str, Dict[str, str]] = {
+    "fa": {
+        "youtube": "🛠 سرویس <b>یوتیوب</b> فعلاً غیر فعال است! کمی دیگر سر بزن 🙏",
+        "soundcloud": "🛠 سرویس <b>ساند‌کلود</b> فعلاً غیر فعال است! کمی دیگر سر بزن 🙏",
+        "both": "🛠 هر دو سرویس <b>یوتیوب و ساند‌کلود</b> فعلاً غیر فعال‌اند! کمی دیگر سر بزن 🙏",
+    },
+    "en": {
+        "youtube": "🛠 The <b>YouTube</b> service is currently disabled! Check back soon 🙏",
+        "soundcloud": "🛠 The <b>SoundCloud</b> service is currently disabled! Check back soon 🙏",
+        "both": "🛠 Both <b>YouTube and SoundCloud</b> services are currently disabled! Check back soon 🙏",
+    },
+}
+
+
+def platform_gate(uid: int, platform: str) -> Optional[str]:
+    """اگر ادمین آن سرویس را خاموش کرده باشد، پیام کاربرپسند برمی‌گرداند."""
+    lang = get_lang(uid)
+    if platform == "youtube" and not yt_enabled():
+        return PLATFORM_OFF_TXT[lang]["youtube"]
+    if platform == "soundcloud" and not sc_enabled():
+        return PLATFORM_OFF_TXT[lang]["soundcloud"]
+    return None
+
+
+def cooldown_sec() -> int:
+    """کول‌داون جاری — پیش‌فرض env، قابل تغییر از پنل ادمین."""
+    raw = settings_get("cooldown_sec")
+    try:
+        return max(0, int(raw)) if raw is not None else COOLDOWN_SEC
+    except ValueError:
+        return COOLDOWN_SEC
+
+
 # --- تاریخچه‌ی دانلود ---
 
 def add_history(uid: int, platform: str, kind: str, title: str, url: str) -> None:
@@ -687,7 +738,7 @@ def cooldown_left(uid: int) -> int:
     if uid in ADMIN_IDS:
         return 0
     now = time.time()
-    left = int(COOLDOWN_SEC - (now - LAST_REQ.get(uid, 0)))
+    left = int(cooldown_sec() - (now - LAST_REQ.get(uid, 0)))
     if left > 0:
         return left
     LAST_REQ[uid] = now
@@ -807,6 +858,11 @@ ADM_PANEL_TXT = (
     "از دکمه‌های زیر استفاده کن:\n"
     "• 📊 آمار → تعداد کاربران و دانلودها\n"
     "• 🖥 وضعیت سرور → CPU / RAM / دیسک\n"
+    "• ▶️/☁️ سرویس‌ها → فعال/غیرفعال کردن یوتیوب یا ساند‌کلود (با خاموشی، کاربر پیام «سرویس فعلاً غیر فعال است» می‌گیرد)\n"
+    "• 🔤 متن‌ترانه → روشن/خاموش کردن تشخیص آهنگ از متن ترانه\n"
+    "• 🔎 اینلاین → روشن/خاموش کردن جستجوی @BotName\n"
+    "• ⏲ کول‌داون → تنظیم فاصله‌ی درخواست‌های هر کاربر\n"
+    "• 🧹 پاکسازی → حذف فایل‌های قدیمی دانلودی\n"
     "• 📢 ارسال همگانی → پیام به همه‌ی اعضا\n"
     "• 🔒 کانال‌های اجباری → افزودن / حذف\n"
     "• 🚫 بن / ♻️ آنبن → مدیریت کاربران"
@@ -851,9 +907,12 @@ def video_keyboard(tok: str, uid: int = 0) -> InlineKeyboardMarkup:
 
 
 def track_keyboard(qtok: str, listen_url: str = "", uid: int = 0) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(B(uid, "dl_this"), callback_data=f"q:{qtok}")]]
+    rows: List[List[InlineKeyboardButton]] = []
+    if yt_enabled():
+        rows.append([InlineKeyboardButton(B(uid, "dl_this"), callback_data=f"q:{qtok}")])
     # دکمه‌ی جایگزین: دانلود از SoundCloud (اگر یوتیوب در دسترس نبود)
-    rows.append([InlineKeyboardButton(B(uid, "dl_sc"), callback_data=f"sc:{qtok}")])
+    if sc_enabled():
+        rows.append([InlineKeyboardButton(B(uid, "dl_sc"), callback_data=f"sc:{qtok}")])
     extra = [
         InlineKeyboardButton(B(uid, "lyrics"), callback_data=f"ly:{qtok}"),
         InlineKeyboardButton(B(uid, "preview"), callback_data=f"pv:{qtok}"),
@@ -893,6 +952,8 @@ def playlist_keyboard(jtok: str, entries: List[Dict[str, Any]], uid: int) -> Inl
 
 
 def admin_panel_kb() -> InlineKeyboardMarkup:
+    def st(on: bool) -> str:
+        return "🟢" if on else "🔴"
     mnt = "🟢 روشن" if maintenance_on() else "🔴 خاموش"
     q = "🟢 روشن" if queue_on() else "🔴 خاموش"
     az = "🟢 روشن" if auto_shazam_on() else "🔴 خاموش"
@@ -903,12 +964,24 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🖥 وضعیت سرور", callback_data="adm:srv"),
             ],
             [
+                InlineKeyboardButton(f"▶️ یوتیوب: {st(yt_enabled())}", callback_data="adm:yt"),
+                InlineKeyboardButton(f"☁️ ساند‌کلود: {st(sc_enabled())}", callback_data="adm:sc"),
+            ],
+            [
+                InlineKeyboardButton(f"🔤 متن‌ترانه: {st(lyrics_detect_on())}", callback_data="adm:lyr"),
+                InlineKeyboardButton(f"🔎 اینلاین: {st(inline_enabled())}", callback_data="adm:inline"),
+            ],
+            [
                 InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm:bcast"),
                 InlineKeyboardButton("🔒 کانال‌های اجباری", callback_data="adm:chans"),
             ],
             [
                 InlineKeyboardButton("🚫 بن کاربر", callback_data="adm:ban"),
                 InlineKeyboardButton("♻️ رفع بن", callback_data="adm:unban"),
+            ],
+            [
+                InlineKeyboardButton(f"⏲ کول‌داون: {cooldown_sec()}s", callback_data="adm:cd"),
+                InlineKeyboardButton("🧹 پاکسازی فایل‌ها", callback_data="adm:clean"),
             ],
             [InlineKeyboardButton(f"🛠 حالت تعمیر: {mnt}", callback_data="adm:mnt")],
             [InlineKeyboardButton(f"🕒 صف دانلود: {q}", callback_data="adm:queue")],
@@ -1865,8 +1938,18 @@ async def submit_url(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, url
     platform = detect_platform(url)
     emoji = PLATFORM_EMOJI.get(platform, "🌐")
 
-    # اسپاتیفای: فقط صوت، بدون منوی کیفیت
+    # گیت سرویس: اگر ادمین یوتیوب/ساند‌کلود را خاموش کرده باشد
+    blocked = platform_gate(user.id, platform)
+    if blocked:
+        await _send_html(context, chat_id, blocked)
+        return
+
+    # اسپاتیفای: فقط صوت، بدون منوی کیفیت — (دانلود از طریق یوتیوب انجام می‌شود)
     if platform == "spotify":
+        blocked = platform_gate(user.id, "youtube")
+        if blocked:
+            await _send_html(context, chat_id, blocked)
+            return
         status = await _send_html(context, chat_id, L(user.id, "spot_processing"))
         meta = await spotify_track_info(url)
         query = (meta or {}).get("title") or ""
@@ -1956,6 +2039,10 @@ async def _send_html(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str
 async def start_download(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user, url: str,
                          platform: str, quality: str = "best") -> None:
     """اجرای کامل یک دانلود: صف → دانلود → ارسال. از مسیر کیفیت/پلی‌لیست/اینلاین/تاریخچه صدا زده می‌شود."""
+    blocked = platform_gate(user.id, platform)
+    if blocked:
+        await _send_html(context, chat_id, blocked)
+        return
     emoji = PLATFORM_EMOJI.get(platform, "🌐")
     status = await context.bot.send_message(chat_id, L(user.id, "processing", emoji=emoji),
                                             parse_mode=ParseMode.HTML)
@@ -2017,10 +2104,10 @@ async def on_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     # ۱) اگر pending داریم، فقط اگر واقعاً مربوط به ادمین است هندل کن
     #    در غیر این صورت پاکش کن تا مسیر جستجو بلاک نشود
-    if pending and user.id in ADMIN_IDS and pending.get("act") in ("addc", "ban", "unban", "bcast1", "bcast2"):
+    if pending and user.id in ADMIN_IDS and pending.get("act") in ("addc", "ban", "unban", "bcast1", "bcast2", "cd"):
         await handle_admin_input(update, context, pending)
         return
-    if pending and (user.id not in ADMIN_IDS or pending.get("act") not in ("addc", "ban", "unban", "bcast1", "bcast2")):
+    if pending and (user.id not in ADMIN_IDS or pending.get("act") not in ("addc", "ban", "unban", "bcast1", "bcast2", "cd")):
         ud.pop("pending", None)
         pending = None
 
@@ -2046,17 +2133,23 @@ async def on_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 return
             # اگر متن شبیه ترانه باشد → بدون پرسیدن پلتفرم، مستقیم آهنگ را از متن پیدا کن
             if looks_like_lyrics(text):
-                await run_music_search(context, msg.chat_id, user, text, "youtube")
+                plat = "youtube" if yt_enabled() else "soundcloud"
+                await run_music_search(context, msg.chat_id, user, text, plat)
                 return
-            # در غیر این صورت: پیشنهاد جستجو
+            # در غیر این صورت: پیشنهاد جستجو (فقط پلتفرم‌های فعال)
+            btns: List[InlineKeyboardButton] = []
+            if sc_enabled():
+                btns.append(InlineKeyboardButton(B(user.id, "search_btn_sc"), callback_data="qry:sc"))
+            if yt_enabled():
+                btns.append(InlineKeyboardButton(B(user.id, "search_btn_yt"), callback_data="qry:yt"))
+            if not btns:
+                await msg.reply_html(PLATFORM_OFF_TXT[get_lang(user.id)]["both"])
+                return
             ud["pending"] = {"act": "search", "query": text}
             shown = text if len(text) <= 300 else text[:300] + "…"
             await msg.reply_html(
                 f"🔍 «<b>{esc(shown)}</b>»\n\n{L(user.id, 'search_ask')}",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(B(user.id, "search_btn_sc"), callback_data="qry:sc"),
-                    InlineKeyboardButton(B(user.id, "search_btn_yt"), callback_data="qry:yt"),
-                ]]),
+                reply_markup=InlineKeyboardMarkup([btns]),
             )
         elif msg.text:
             await msg.reply_html(L(user.id, "hint", max=MAX_FILE_MB), reply_markup=back_kb())
@@ -2215,6 +2308,10 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         notice_txt = "🔤 <b>در حال تشخیص آهنگ از متن ترانه…</b> ⏳"
     else:
         notice_txt = f"🔍 «{esc(shown)}»…"
+    blocked = platform_gate(user.id, platform)
+    if blocked:
+        await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
+        return
     notice = await context.bot.send_message(chat_id, notice_txt, parse_mode=ParseMode.HTML)
 
     # ۱) جستجوی مستقیم در پلتفرم انتخابی
@@ -2229,7 +2326,7 @@ async def run_music_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     # ۲) تلاش برای تشخیص نام آهنگ از متن ترانه (بدون نیاز به اسم خواننده)
     lyrics_hit: Optional[Dict[str, str]] = None
     lyrics_results: List[Dict[str, Any]] = []
-    if len(query.strip()) >= 4:
+    if len(query.strip()) >= 4 and lyrics_detect_on():
         try:
             lyrics_hit = await search_song_by_lyrics(query)
         except Exception as exc:
@@ -2830,6 +2927,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if matched == "v:":
             if ent.get("kind") != "video":
                 return
+            blocked = platform_gate(user.id, "youtube")
+            if blocked:
+                await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
+                return
             query = clean_title(ent.get("title") or "") or ent.get("title") or "music"
             await send_music_by_query(context, chat_id, f"{query} song", user.id)
             return
@@ -2838,12 +2939,20 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if matched == "q:":
             if ent.get("kind") != "track":
                 return
+            blocked = platform_gate(user.id, "youtube")
+            if blocked:
+                await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
+                return
             await send_music_by_query(context, chat_id, f"{ent.get('query')} song", user.id)
             return
 
         # --- دانلود از SoundCloud (جایگزین یوتیوب) ---
         if matched == "sc:":
             if ent.get("kind") != "track":
+                return
+            blocked = platform_gate(user.id, "soundcloud")
+            if blocked:
+                await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
                 return
             await send_music_by_query(context, chat_id, f"{ent.get('query')} song", user.id,
                                        platform="soundcloud")
@@ -2855,6 +2964,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 return
             url = ent.get("url") or ""
             platform = ent.get("platform") or ("soundcloud" if matched == "scs:" else "youtube")
+            blocked = platform_gate(user.id, platform)
+            if blocked:
+                await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
+                return
             title = ent.get("title") or ""
             await send_music_by_query(context, chat_id, url, user.id,
                                        source_title=title, platform=platform)
@@ -2940,6 +3053,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if matched == "pv:":
             if ent.get("kind") != "track":
                 return
+            blocked = platform_gate(user.id, "youtube")
+            if blocked:
+                await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
+                return
             _spawn(run_bg(make_preview_or_ringtone(
                 context, chat_id, ent.get("query") or "", user.id, mode="preview")))
             return
@@ -2947,6 +3064,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # --- رینگتون ---
         if matched == "rg:":
             if ent.get("kind") != "track":
+                return
+            blocked = platform_gate(user.id, "youtube")
+            if blocked:
+                await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
                 return
             _spawn(run_bg(make_preview_or_ringtone(
                 context, chat_id, ent.get("query") or "", user.id, mode="ringtone")))
@@ -3025,6 +3146,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             url2 = ent.get("url") or ""
             kind2 = ent.get("htype") or ent.get("kind") or ""
             if kind2 == "music" and str(url2).startswith("search://"):
+                blocked = platform_gate(user.id, "youtube")
+                if blocked:
+                    await context.bot.send_message(chat_id, blocked, parse_mode=ParseMode.HTML)
+                    return
                 await send_music_by_query(context, chat_id, str(url2).replace("search://", ""), user.id)
                 return
             if not URL_RE.search(url2):
@@ -3172,17 +3297,61 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, dat
             pass
         return
 
-    if data in ("adm:mnt", "adm:queue", "adm:ashz"):
-        key = {"adm:mnt": "maintenance", "adm:queue": "queue_on", "adm:ashz": "auto_shazam"}[data]
+    if data in ("adm:mnt", "adm:queue", "adm:ashz", "adm:yt", "adm:sc", "adm:lyr", "adm:inline"):
+        key = {
+            "adm:mnt": "maintenance", "adm:queue": "queue_on", "adm:ashz": "auto_shazam",
+            "adm:yt": "yt_off", "adm:sc": "sc_off", "adm:lyr": "lyrics_off", "adm:inline": "inline_off",
+        }[data]
         now_on = toggle_setting(key)
         if key == "maintenance" and not now_on:
             JOIN_OK.clear()
+        if key.endswith("_off"):
+            ans = "🔴 سرویس غیرفعال شد" if now_on else "🟢 سرویس فعال شد"
+        else:
+            ans = "✅ روشن شد." if now_on else "⛔️ خاموش شد."
         try:
-            await q.answer("✅ روشن شد." if now_on else "⛔️ خاموش شد.")
+            await q.answer(ans)
         except TelegramError:
             pass
         try:
             await q.edit_message_text(ADM_PANEL_TXT, parse_mode=ParseMode.HTML, reply_markup=admin_panel_kb())
+        except TelegramError:
+            pass
+        return
+
+    # --- پاکسازی دستی فایل‌های قدیمی دانلود ---
+    if data == "adm:clean":
+        cutoff = time.time() - 300   # فقط فایل‌های قدیمی‌تر از ۵ دقیقه (وسط دانلود پاک نشوند)
+        removed, freed = 0, 0
+        try:
+            for f in DOWNLOAD_DIR.glob("*"):
+                try:
+                    if f.is_file() and f.stat().st_mtime < cutoff:
+                        freed += f.stat().st_size
+                        f.unlink(missing_ok=True)
+                        removed += 1
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        try:
+            await q.answer(f"🧹 {removed} فایل ({fmt_size(freed)}) پاک شد", show_alert=True)
+        except TelegramError:
+            pass
+        return
+
+    # --- تنظیم کول‌داون ---
+    if data == "adm:cd":
+        ud["pending"] = {"act": "cd"}
+        try:
+            await q.answer(f"⏲ فعلی: {cooldown_sec()} ثانیه")
+            await q.edit_message_text(
+                f"⏲ <b>تنظیم کول‌داون</b>\n\n"
+                f"مقدار فعلی: <b>{cooldown_sec()}</b> ثانیه (فاصله‌ی بین درخواست‌های هر کاربر)\n"
+                f"یک عدد بین ۰ تا ۳۰۰ بفرست. (۰ = بدون محدودیت)",
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_kb("adm:panel"),
+            )
         except TelegramError:
             pass
         return
@@ -3434,6 +3603,19 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             await msg.reply_html(f"♻️ بن کاربر <code>{uid}</code> برداشته شد.")
 
+    elif act == "cd":
+        raw = (msg.text or "").strip()
+        if not raw.isdigit():
+            await msg.reply_text("❌ فقط عدد بفرست؛ مثال: 12")
+            return
+        val = min(300, int(raw))
+        settings_set("cooldown_sec", str(val))
+        ud.pop("pending", None)
+        await msg.reply_html(
+            f"⏲ کول‌داون روی <b>{val}</b> ثانیه ست شد." + (" (بدون محدودیت)" if val == 0 else ""),
+            reply_markup=back_kb("adm:panel"),
+        )
+
     elif act == "bcast1":
         ud["bc_msg"] = msg
         ud["pending"] = {"act": "bcast2"}
@@ -3537,6 +3719,15 @@ async def on_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if iq is None:
         return
     user = iq.from_user
+    # گیت پنل: حالت اینلاین یا یوتیوب خاموش → نتیجه‌ای نمی‌دهیم
+    if not inline_enabled() or not yt_enabled():
+        try:
+            await iq.answer(results=[], cache_time=5,
+                            switch_pm_text="🛠 سرویس جستجو فعلاً غیر فعال است",
+                            switch_pm_parameter="start")
+        except TelegramError:
+            pass
+        return
     query = (iq.query or "").strip()
     if len(query) < 3:
         try:
