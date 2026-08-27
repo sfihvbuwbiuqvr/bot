@@ -3161,6 +3161,32 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
 
     # ---------- دانلود سریع از نتایج اینلاین (گیت جوین؛ کول‌داون در submit_url) ----------
+    if data.startswith("iv2:"):
+        tok2 = data[4:]
+        ent2 = REGISTRY.get(tok2) or {}
+        url2 = ent2.get("url") or ""
+        if not url2 or ent2.get("exp", 0) < time.time():
+            try:
+                await q.answer("⌛️ این نتیجه منقضی شده! دوباره @BotName را سرچ کن.", show_alert=True)
+            except TelegramError:
+                pass
+            return
+        chat_id = q.message.chat_id if isinstance(q.message, Message) and hasattr(q.message, "chat_id") else user.id
+        missing = await get_missing_channels(context, user.id)
+        if missing:
+            try:
+                await context.bot.send_message(chat_id, L(user.id, "join"),
+                                               parse_mode=ParseMode.HTML,
+                                               reply_markup=join_keyboard(missing, user.id))
+            except TelegramError:
+                pass
+            return
+        try:
+            await submit_url(context, chat_id, user, url2)
+        except Exception as exc:
+            log_exc(exc, "inline-dl-sc")
+        return
+
     if data.startswith("iv:"):
         vid = data[3:]
         url = f"https://www.youtube.com/watch?v={vid}"
@@ -3690,26 +3716,31 @@ async def safe_edit(msg: Optional[Message], text: str) -> None:
 # =====================================================================
 
 
-def inline_search_sync(query: str) -> List[Dict[str, Any]]:
-    """جستجوی سبک یوتیوب (flat، بدون فرمت‌ها) برای نتایج اینلاین."""
+def inline_search_sync(query: str, platform: str = "youtube") -> List[Dict[str, Any]]:
+    """جستجوی سبک (flat) برای نتایج اینلاین. platform: youtube | soundcloud."""
     opts = _ydl_base_opts()
     opts.pop("playlist_items", None)
     opts.update({"extract_flat": "discard_in_response", "skip_download": True, "format": "best/worst"})
-    info = _extract_with_fallback(f"ytsearch6:{query}", opts, download=False)
+    prefix = "scsearch6" if platform == "soundcloud" else "ytsearch6"
+    info = _extract_with_fallback(f"{prefix}:{query}", opts, download=False)
     entries = (info or {}).get("entries") or []
     out: List[Dict[str, Any]] = []
     for e in entries:
         if not isinstance(e, dict):
             continue
-        vid = e.get("id") or ""
-        url = e.get("url") or (f"https://www.youtube.com/watch?v={vid}" if vid else "")
+        vid = str(e.get("id") or "")
+        url = e.get("url") or e.get("webpage_url") or ""
+        if not url and platform == "youtube" and vid:
+            url = f"https://www.youtube.com/watch?v={vid}"
         if not url:
             continue
         out.append({
             "id": vid,
             "title": e.get("title") or "?",
+            "uploader": (e.get("uploader") or e.get("channel") or "").strip(),
             "url": url,
             "duration": e.get("duration"),
+            "platform": platform,
         })
     return out
 
@@ -3729,6 +3760,7 @@ async def on_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
         return
     query = (iq.query or "").strip()
+    log.info("🔎 inline-query: «%s» by %s", query[:60], user.id)
     if len(query) < 3:
         try:
             await iq.answer(
@@ -3748,21 +3780,29 @@ async def on_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         items = []
         for r in results[:6]:
+            plat = r.get("platform") or "youtube"
             rid = str(r.get("id") or "").strip() or secrets.token_hex(4)
             rtitle = (r.get("title") or "بدون عنوان")[:120]
-            thumb = f"https://i.ytimg.com/vi/{rid}/hqdefault.jpg"
             dur = fmt_dur(r.get("duration")) if r.get("duration") else ""
-            desc = f"⏱ {dur}" if dur else "YouTube"
+            thumb = f"https://i.ytimg.com/vi/{rid}/hqdefault.jpg" if plat == "youtube" else None
+            if plat == "soundcloud":
+                desc = f"☁️ {r.get('uploader')}" if r.get("uploader") else "SoundCloud"
+                if dur:
+                    desc += f" • ⏱ {dur}"
+                cb = "iv2:" + reg_token_add(kind="ivsc", owner=user.id,
+                                            url=r["url"], title=rtitle)
+            else:
+                desc = f"⏱ {dur}" if dur else "YouTube"
+                cb = f"iv:{rid}"
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📥 دانلود", callback_data=f"iv:{rid}"),
+                InlineKeyboardButton("📥 دانلود", callback_data=cb),
             ]])
             items.append(InlineQueryResultArticle(
-                id=rid[:64],
+                id=f"{plat[:2]}_{rid}"[:64],
                 title=rtitle,
-                description=desc,
+                description=desc[:100],
                 thumbnail_url=thumb,
-                input_message_content=InputTextMessageContent(
-                    f"https://www.youtube.com/watch?v={rid}"),
+                input_message_content=InputTextMessageContent(r["url"]),
                 reply_markup=kb,
             ))
         return items
@@ -3773,10 +3813,17 @@ async def on_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if cached and cached[0] > time.time():
             results = cached[1]
         else:
-            results = await asyncio.to_thread(inline_search_sync, query)
+            results = await asyncio.to_thread(inline_search_sync, query, "youtube")
+            if not results and sc_enabled():
+                results = await asyncio.to_thread(inline_search_sync, query, "soundcloud")
             INLINE_CACHE[(user.id, query.lower())] = (time.time() + 180, results)
             while len(INLINE_CACHE) > 300:
                 INLINE_CACHE.pop(next(iter(INLINE_CACHE)))
+        if not results:
+            await iq.answer(results=[], cache_time=10,
+                            switch_pm_text="😕 چیزی پیدا نشد — اینجا کامل جستجو کن",
+                            switch_pm_parameter="start")
+            return
         await iq.answer(results=build(results), cache_time=60)
     except Exception as exc:
         log_exc(exc, "inline")
@@ -3857,6 +3904,8 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def post_init(app: Application) -> None:
     me = await app.bot.get_me()
     log.info("🤖 Bot @%s started successfully!", me.username)
+    log.info("💡 اگر جستجوی اینلاین (@%s نام‌آهنگ) نتیجه نمی‌دهد، در BotFather "
+             "دستور /setinline را بزن و «نام آهنگ» را placeholder ست کن.", me.username)
     try:
         await app.bot.set_my_commands(
             [
@@ -3872,7 +3921,12 @@ async def post_init(app: Application) -> None:
         log.warning("set_my_commands failed: %s", exc)
     for aid in ADMIN_IDS:
         try:
-            await app.bot.send_message(aid, "✅ ربات روشن شد و آماده‌ی کار است! 🎬🎵")
+            await app.bot.send_message(
+                aid,
+                "✅ ربات روشن شد و آماده‌ی کار است! 🎬🎵\n"
+                f"💡 اینلاین کار نمی‌کند؟ در BotFather دستور /setinline را بزن "
+                f"(مثلاً placeholder: «نام آهنگ»).",
+            )
         except TelegramError:
             pass
 
