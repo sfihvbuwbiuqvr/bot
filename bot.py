@@ -145,6 +145,7 @@ DOWNLOAD_DIR: Path = Path(os.getenv("DOWNLOAD_DIR", "downloads"))
 DB_PATH: Path = Path(os.getenv("DB_PATH", "bot.db"))
 
 MAX_FILE_MB: int = int(os.getenv("MAX_FILE_MB", "48"))          # سقف ارسال به تلگرام (~50MB API)
+BOT_DL_MB: int = 20                                              # سقف دانلود ربات از فایل‌های تلگرام (API)
 AUDIO_BITRATE: str = os.getenv("AUDIO_BITRATE", "192")           # کیفیت mp3 خروجی
 CLEAN_AFTER_MIN: int = int(os.getenv("CLEAN_AFTER_MIN", "45"))   # عمر فایل‌ها قبل از پاکسازی
 JOIN_CACHE_SEC: int = int(os.getenv("JOIN_CACHE_SEC", "600"))    # کش نتیجه‌ی عضویت
@@ -201,8 +202,8 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Hi <b>{name}</b> 👋\nWelcome to the <b>Video Downloader & Music Finder</b> bot 🎶\n\n🎬 Send a link from <b>YouTube / Instagram / TikTok / SoundCloud</b> or even <b>Spotify</b>.\n🎧 After that you can identify its song or get the full MP3!\n\n👇 Pick an option below or just send your link:",
     },
     "hint": {
-        "fa": "🤖 <b>راهنما:</b>\n\n1️⃣ لینک از یوتیوب، اینستاگرام، تیک‌تاک، ساند‌کلود یا اسپاتیفای کپی کن.\n2️⃣ همین‌جا بفرستش.\n3️⃣ کیفیت رو انتخاب کن و صبر کن 📥\n4️⃣ زیر فایل این دکمه‌ها هست:\n     • 🎵 شناسایی آهنگ (Shazam)\n     • 🎧 دانلود نسخه موزیک\n     • 📝 متن ترانه • ⏱ پیش‌نمایش • 🔔 رینگتون\n\n🔤 چند خط از <b>متن آهنگ</b> رو بفرست (بدون اسم خواننده) تا خودم آهنگ رو پیدا کنم!\n📨 پست کانال‌ها رو هم می‌تونی فوروارد بدی تا برات ذخیره‌اش کنم!\n⚠️ سقف حجم هر فایل: حدود {max} مگابایت",
-        "en": "🤖 <b>Guide:</b>\n\n1️⃣ Copy a link from YouTube, Instagram, TikTok, SoundCloud or Spotify.\n2️⃣ Send it here.\n3️⃣ Choose quality and wait 📥\n4️⃣ Under every file you'll see:\n     • 🎵 Identify song (Shazam)\n     • 🎧 Download music version\n     • 📝 Lyrics • ⏱ Preview • 🔔 Ringtone\n\n🔤 Send a few lines of <b>song lyrics</b> (no artist needed) and I'll find the track!\n📨 You can also forward channel posts and I'll save them for you!\n⚠️ Max file size: ~{max} MB",
+        "fa": "🤖 <b>راهنما:</b>\n\n1️⃣ لینک از یوتیوب، اینستاگرام، تیک‌تاک، ساند‌کلود یا اسپاتیفای کپی کن.\n2️⃣ همین‌جا بفرستش.\n3️⃣ کیفیت رو انتخاب کن و صبر کن 📥\n4️⃣ زیر فایل این دکمه‌ها هست:\n     • 🎵 شناسایی آهنگ (Shazam)\n     • 🎧 دانلود نسخه موزیک\n     • 📝 متن ترانه • ⏱ پیش‌نمایش • 🔔 رینگتون\n\n🎙 <b>ویس، آهنگ یا ویدیو</b> بفرست تا خودکار آهنگش رو شناسایی کنم!\n🔤 چند خط از <b>متن آهنگ</b> رو بفرست (بدون اسم خواننده) تا خودم آهنگ رو پیدا کنم!\n📨 پست کانال‌ها رو هم می‌تونی فوروارد بدی تا برات ذخیره‌اش کنم!\n⚠️ سقف حجم هر فایل: حدود {max} مگابایت",
+        "en": "🤖 <b>Guide:</b>\n\n1️⃣ Copy a link from YouTube, Instagram, TikTok, SoundCloud or Spotify.\n2️⃣ Send it here.\n3️⃣ Choose quality and wait 📥\n4️⃣ Under every file you'll see:\n     • 🎵 Identify song (Shazam)\n     • 🎧 Download music version\n     • 📝 Lyrics • ⏱ Preview • 🔔 Ringtone\n\n🎙 Send a <b>voice, audio or video</b> and I'll auto-detect the song!\n🔤 Send a few lines of <b>song lyrics</b> (no artist needed) and I'll find the track!\n📨 You can also forward channel posts and I'll save them for you!\n⚠️ Max file size: ~{max} MB",
     },
     "join": {
         "fa": "⛔️ برای استفاده از ربات ابتدا باید در کانال‌های زیر عضو بشی:\n\nبعد از عضویت روی «✅ بررسی عضویت» بزن.",
@@ -568,6 +569,11 @@ def inline_enabled() -> bool:
     return not setting_on("inline_off")
 
 
+def auto_id_enabled() -> bool:
+    """شناسایی خودکار آهنگ از ویس/آهنگ/ویدیوی ارسالی کاربر — پیش‌فرض روشن."""
+    return not setting_on("auto_id_off")
+
+
 PLATFORM_OFF_TXT: Dict[str, Dict[str, str]] = {
     "fa": {
         "youtube": "🛠 سرویس <b>یوتیوب</b> فعلاً غیر فعال است! کمی دیگر سر بزن 🙏",
@@ -861,6 +867,7 @@ ADM_PANEL_TXT = (
     "• ▶️/☁️ سرویس‌ها → فعال/غیرفعال کردن یوتیوب یا ساند‌کلود (با خاموشی، کاربر پیام «سرویس فعلاً غیر فعال است» می‌گیرد)\n"
     "• 🔤 متن‌ترانه → روشن/خاموش کردن تشخیص آهنگ از متن ترانه\n"
     "• 🔎 اینلاین → روشن/خاموش کردن جستجوی @BotName\n"
+    "• 🎙 شناسایی خودکار → با خاموشی، فرستادن ویس/آهنگ/ویدیو آهنگ را شناسایی نمی‌کند\n"
     "• ⏲ کول‌داون → تنظیم فاصله‌ی درخواست‌های هر کاربر\n"
     "• 🧹 پاکسازی → حذف فایل‌های قدیمی دانلودی\n"
     "• 📢 ارسال همگانی → پیام به همه‌ی اعضا\n"
@@ -970,6 +977,9 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(f"🔤 متن‌ترانه: {st(lyrics_detect_on())}", callback_data="adm:lyr"),
                 InlineKeyboardButton(f"🔎 اینلاین: {st(inline_enabled())}", callback_data="adm:inline"),
+            ],
+            [
+                InlineKeyboardButton(f"🎙 شناسایی خودکار فایل: {st(auto_id_enabled())}", callback_data="adm:aid"),
             ],
             [
                 InlineKeyboardButton("📢 ارسال همگانی", callback_data="adm:bcast"),
@@ -1905,6 +1915,10 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE, m
         sent = await msg.copy(chat_id=msg.chat_id)
         bump_stat("dl_channel")
         add_history(user.id, "channel", "copy", "forwarded media", "forward://")
+        # 🎵 فوروارد آهنگ/ویس/ویدیو → شناسایی خودکار هم انجام شود (اگر حجم مناسب باشد)
+        m = _pick_identifiable_media(msg)
+        if m is not None and auto_id_enabled() and (getattr(m, "file_size", 0) or 0) <= BOT_DL_MB * MB:
+            _spawn(run_bg(identify_user_media(context, msg, user, m)))
         try:
             if sent is not None and hasattr(sent, "edit_reply_markup"):
                 kb = None
@@ -2118,6 +2132,15 @@ async def on_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # ۳) پست فورواردشده با مدیا → ذخیره‌ی محتوا
     if msg.forward_origin:
         await handle_forwarded(update, context, msg, user)
+        return
+
+    # ۳.۵) ویس/آهنگ/ویدیوی ارسالی کاربر → شناسایی خودکار آهنگ (Shazam)
+    #      (اگر کپشن لینک داشت، اولویت با دانلود همان لینک است)
+    media_obj = _pick_identifiable_media(msg)
+    if media_obj is not None and auto_id_enabled() and not URL_RE.search(msg.caption or ""):
+        if not cooldown_check_or_notice(user.id, lambda txt: msg.reply_text(txt)):
+            return
+        _spawn(run_bg(identify_user_media(context, msg, user, media_obj)))
         return
 
     text = (msg.text or msg.caption or "").strip()
@@ -2675,6 +2698,114 @@ async def send_music_by_query(
 # ---------------------------------------------------------------------
 
 
+async def send_shazam_result(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                             user, trk: Dict[str, str]) -> None:
+    """نمایش نتیجه شناسایی + دکمه‌های دانلود/متن‌ترانه/پیش‌نمایش/رینگتون."""
+    qtok = reg_token_add(
+        kind="track",
+        owner=user.id,
+        query=f"{trk['artist']} {trk['title']}".strip(),
+        artist=trk["artist"],
+        title=trk["title"],
+    )
+    lines = [f"🎧 <b>{esc(trk['title'])}</b>"]
+    if trk["artist"]:
+        lines.append(f"🎤 هنرمند: {esc(trk['artist'])}")
+    if trk["album"]:
+        lines.append(f"💿 آلبوم: {esc(trk['album'])}")
+    tags = []
+    if trk["year"]:
+        tags.append(f"📅 {esc(trk['year'])}")
+    if trk["genre"]:
+        tags.append(f"🏷 {esc(trk['genre'])}")
+    if tags:
+        lines.append("   ".join(tags))
+    if trk["label"]:
+        lines.append(f"🏢 ناشر: {esc(trk['label'])}")
+    if trk["shazam_url"]:
+        lines.append(f"\n🔗 <a href=\"{trk['shazam_url']}\">مشاهده در Shazam</a>")
+    caption = "\n".join(lines)
+    kb = track_keyboard(qtok, trk.get("listen_url") or "", user.id)
+
+    sent = False
+    if trk["cover"]:
+        try:
+            await context.bot.send_photo(
+                chat_id, photo=trk["cover"], caption=caption,
+                parse_mode=ParseMode.HTML, reply_markup=kb,
+            )
+            sent = True
+        except (TelegramError, BadRequest) as exc:
+            log_exc(exc, "send_photo(shazam)")
+    if not sent:
+        await context.bot.send_message(chat_id, caption, parse_mode=ParseMode.HTML, reply_markup=kb)
+    bump_stat("shazam_ok")
+
+
+async def identify_user_media(context: ContextTypes.DEFAULT_TYPE, msg: Message,
+                              user, media_obj: Any) -> None:
+    """شناسایی خودکار آهنگ از ویس/موزیک/ویدیوی که کاربر مستقیم فرستاده.
+
+    فایل از تلگرام دانلود (سقف ۲۰MB)، تکه‌ای صدا استخراج و با Shazam مقایسه می‌شود.
+    """
+    chat_id = msg.chat_id
+    notice: Optional[Message] = None
+    local: Optional[Path] = None
+    snippet: Optional[Path] = None
+    try:
+        size = getattr(media_obj, "file_size", 0) or 0
+        if size > BOT_DL_MB * MB:
+            await _send_html(
+                context, chat_id,
+                f"📦 فایل برای شناسایی خودکار بزرگ‌تر از {BOT_DL_MB} مگابایت است!\n"
+                "💡 تکه‌ی کوتاه‌تر بفرست یا لینک آهنگ را بده.")
+            return
+        notice = await context.bot.send_message(chat_id, L(user.id, "searching_song"),
+                                                parse_mode=ParseMode.HTML)
+        try:
+            await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        except TelegramError:
+            pass
+        tg_file = await context.bot.get_file(media_obj.file_id)
+        ext = Path(tg_file.file_path or "media.mp3").suffix.lower() or ".bin"
+        local = DOWNLOAD_DIR / f"idf_{secrets.token_hex(4)}{ext}"
+        await tg_file.download_to_drive(custom_path=str(local))
+        snippet = await extract_audio_snippet(local)
+        result = await recognize_file(snippet)
+        trk = parse_shazam_result(result)
+        await safe_delete(notice)
+        notice = None
+        if not trk:
+            await context.bot.send_message(chat_id, L(user.id, "notfound"))
+            return
+        await send_shazam_result(context, chat_id, user, trk)
+    except Exception as exc:
+        log_exc(exc, "identify_user_media")
+        await notify_log_channel(context.bot, "identify_user_media", f"user={user.id}\n{exc}")
+        try:
+            await context.bot.send_message(chat_id, L(user.id, "err_generic"))
+        except TelegramError:
+            pass
+    finally:
+        await safe_delete(notice)
+        for p in (local, snippet):
+            if p:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def _pick_identifiable_media(msg: Message) -> Any:
+    """اگر پیام حاوی مدیای قابل‌شناسایی (صدا/ویدیو) باشد، همان آبجکت را می‌دهد."""
+    m = msg.voice or msg.audio or msg.video or msg.video_note
+    if m is None and msg.document is not None:
+        mime = (msg.document.mime_type or "").lower()
+        if mime.startswith(("audio/", "video/")):
+            m = msg.document
+    return m
+
+
 async def do_song_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ent: Dict[str, Any], user) -> None:
     video_path = Path(ent.get("path") or "")
     notice: Optional[Message] = None
@@ -2698,45 +2829,7 @@ async def do_song_search(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ent: 
             await context.bot.send_message(chat_id, L(user.id, "notfound"))
             return
 
-        qtok = reg_token_add(
-            kind="track",
-            owner=user.id,
-            query=f"{trk['artist']} {trk['title']}".strip(),
-            artist=trk["artist"],
-            title=trk["title"],
-        )
-        lines = [f"🎧 <b>{esc(trk['title'])}</b>"]
-        if trk["artist"]:
-            lines.append(f"🎤 هنرمند: {esc(trk['artist'])}")
-        if trk["album"]:
-            lines.append(f"💿 آلبوم: {esc(trk['album'])}")
-        tags = []
-        if trk["year"]:
-            tags.append(f"📅 {esc(trk['year'])}")
-        if trk["genre"]:
-            tags.append(f"🏷 {esc(trk['genre'])}")
-        if tags:
-            lines.append("   ".join(tags))
-        if trk["label"]:
-            lines.append(f"🏢 ناشر: {esc(trk['label'])}")
-        if trk["shazam_url"]:
-            lines.append(f"\n🔗 <a href=\"{trk['shazam_url']}\">مشاهده در Shazam</a>")
-        caption = "\n".join(lines)
-        kb = track_keyboard(qtok, trk.get("listen_url") or "", user.id)
-
-        sent = False
-        if trk["cover"]:
-            try:
-                await context.bot.send_photo(
-                    chat_id, photo=trk["cover"], caption=caption,
-                    parse_mode=ParseMode.HTML, reply_markup=kb,
-                )
-                sent = True
-            except (TelegramError, BadRequest) as exc:
-                log_exc(exc, "send_photo(shazam)")
-        if not sent:
-            await context.bot.send_message(chat_id, caption, parse_mode=ParseMode.HTML, reply_markup=kb)
-        bump_stat("shazam_ok")
+        await send_shazam_result(context, chat_id, user, trk)
     except Exception as exc:
         log_exc(exc, "do_song_search")
         await notify_log_channel(context.bot, "do_song_search", f"user={user.id}\n{exc}")
@@ -3323,10 +3416,11 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, dat
             pass
         return
 
-    if data in ("adm:mnt", "adm:queue", "adm:ashz", "adm:yt", "adm:sc", "adm:lyr", "adm:inline"):
+    if data in ("adm:mnt", "adm:queue", "adm:ashz", "adm:yt", "adm:sc", "adm:lyr", "adm:inline", "adm:aid"):
         key = {
             "adm:mnt": "maintenance", "adm:queue": "queue_on", "adm:ashz": "auto_shazam",
             "adm:yt": "yt_off", "adm:sc": "sc_off", "adm:lyr": "lyrics_off", "adm:inline": "inline_off",
+            "adm:aid": "auto_id_off",
         }[data]
         now_on = toggle_setting(key)
         if key == "maintenance" and not now_on:
